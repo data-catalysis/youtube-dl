@@ -45,7 +45,7 @@ def parseOpts(overrideArguments=None):
         except IOError:
             return default  # silently skip if file is not present
         try:
-            # FIXME: https://github.com/rg3/youtube-dl/commit/dfe5fa49aed02cf36ba9f743b11b0903554b5e56
+            # FIXME: https://github.com/ytdl-org/youtube-dl/commit/dfe5fa49aed02cf36ba9f743b11b0903554b5e56
             contents = optionf.read()
             if sys.version_info < (3,):
                 contents = contents.decode(preferredencoding())
@@ -134,7 +134,7 @@ def parseOpts(overrideArguments=None):
         action='help',
         help='Print this help text and exit')
     general.add_option(
-        '-v', '--version',
+        '--version',
         action='version',
         help='Print program version and exit')
     general.add_option(
@@ -841,11 +841,11 @@ def parseOpts(overrideArguments=None):
     postproc.add_option(
         '--prefer-avconv',
         action='store_false', dest='prefer_ffmpeg',
-        help='Prefer avconv over ffmpeg for running the postprocessors (default)')
+        help='Prefer avconv over ffmpeg for running the postprocessors')
     postproc.add_option(
         '--prefer-ffmpeg',
         action='store_true', dest='prefer_ffmpeg',
-        help='Prefer ffmpeg over avconv for running the postprocessors')
+        help='Prefer ffmpeg over avconv for running the postprocessors (default)')
     postproc.add_option(
         '--ffmpeg-location', '--avconv-location', metavar='PATH',
         dest='ffmpeg_location',
@@ -853,7 +853,7 @@ def parseOpts(overrideArguments=None):
     postproc.add_option(
         '--exec',
         metavar='CMD', dest='exec_cmd',
-        help='Execute a command on the file after downloading, similar to find\'s -exec syntax. Example: --exec \'adb push {} /sdcard/Music/ && rm {}\'')
+        help='Execute a command on the file after downloading and post-processing, similar to find\'s -exec syntax. Example: --exec \'adb push {} /sdcard/Music/ && rm {}\'')
     postproc.add_option(
         '--convert-subs', '--convert-subtitles',
         metavar='FORMAT', dest='convertsubtitles', default=None,

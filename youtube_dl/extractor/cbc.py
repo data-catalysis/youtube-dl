@@ -1,8 +1,10 @@
 # coding: utf-8
 from __future__ import unicode_literals
 
+import hashlib
 import json
 import re
+from xml.sax.saxutils import escape
 
 from .common import InfoExtractor
 from ..compat import (
@@ -17,6 +19,7 @@ from ..utils import (
     xpath_element,
     xpath_with_ns,
     find_xpath_attr,
+    orderedSet,
     parse_duration,
     parse_iso8601,
     parse_age_limit,
@@ -136,9 +139,15 @@ class CBCIE(InfoExtractor):
         entries = [
             self._extract_player_init(player_init, display_id)
             for player_init in re.findall(r'CBC\.APP\.Caffeine\.initInstance\(({.+?})\);', webpage)]
+        media_ids = []
+        for media_id_re in (
+                r'<iframe[^>]+src="[^"]+?mediaId=(\d+)"',
+                r'<div[^>]+\bid=["\']player-(\d+)',
+                r'guid["\']\s*:\s*["\'](\d+)'):
+            media_ids.extend(re.findall(media_id_re, webpage))
         entries.extend([
             self.url_result('cbcplayer:%s' % media_id, 'CBCPlayer', media_id)
-            for media_id in re.findall(r'<iframe[^>]+src="[^"]+?mediaId=(\d+)"', webpage)])
+            for media_id in orderedSet(media_ids)])
         return self.playlist_result(
             entries, display_id, strip_or_none(title),
             self._og_search_description(webpage))
@@ -209,6 +218,29 @@ class CBCWatchBaseIE(InfoExtractor):
         'clearleap': 'http://www.clearleap.com/namespace/clearleap/1.0/',
     }
     _GEO_COUNTRIES = ['CA']
+    _LOGIN_URL = 'https://api.loginradius.com/identity/v2/auth/login'
+    _TOKEN_URL = 'https://cloud-api.loginradius.com/sso/jwt/api/token'
+    _API_KEY = '3f4beddd-2061-49b0-ae80-6f1f2ed65b37'
+    _NETRC_MACHINE = 'cbcwatch'
+
+    def _signature(self, email, password):
+        data = json.dumps({
+            'email': email,
+            'password': password,
+        }).encode()
+        headers = {'content-type': 'application/json'}
+        query = {'apikey': self._API_KEY}
+        resp = self._download_json(self._LOGIN_URL, None, data=data, headers=headers, query=query)
+        access_token = resp['access_token']
+
+        # token
+        query = {
+            'access_token': access_token,
+            'apikey': self._API_KEY,
+            'jwtapp': 'jwt',
+        }
+        resp = self._download_json(self._TOKEN_URL, None, headers=headers, query=query)
+        return resp['signature']
 
     def _call_api(self, path, video_id):
         url = path if path.startswith('http') else self._API_BASE_URL + path
@@ -232,7 +264,8 @@ class CBCWatchBaseIE(InfoExtractor):
     def _real_initialize(self):
         if self._valid_device_token():
             return
-        device = self._downloader.cache.load('cbcwatch', 'device') or {}
+        device = self._downloader.cache.load(
+            'cbcwatch', self._cache_device_key()) or {}
         self._device_id, self._device_token = device.get('id'), device.get('token')
         if self._valid_device_token():
             return
@@ -241,16 +274,30 @@ class CBCWatchBaseIE(InfoExtractor):
     def _valid_device_token(self):
         return self._device_id and self._device_token
 
+    def _cache_device_key(self):
+        email, _ = self._get_login_info()
+        return '%s_device' % hashlib.sha256(email.encode()).hexdigest() if email else 'device'
+
     def _register_device(self):
-        self._device_id = self._device_token = None
         result = self._download_xml(
             self._API_BASE_URL + 'device/register',
             None, 'Acquiring device token',
             data=b'<device><type>web</type></device>')
         self._device_id = xpath_text(result, 'deviceId', fatal=True)
-        self._device_token = xpath_text(result, 'deviceToken', fatal=True)
+        email, password = self._get_login_info()
+        if email and password:
+            signature = self._signature(email, password)
+            data = '<login><token>{0}</token><device><deviceId>{1}</deviceId><type>web</type></device></login>'.format(
+                escape(signature), escape(self._device_id)).encode()
+            url = self._API_BASE_URL + 'device/login'
+            result = self._download_xml(
+                url, None, data=data,
+                headers={'content-type': 'application/xml'})
+            self._device_token = xpath_text(result, 'token', fatal=True)
+        else:
+            self._device_token = xpath_text(result, 'deviceToken', fatal=True)
         self._downloader.cache.store(
-            'cbcwatch', 'device', {
+            'cbcwatch', self._cache_device_key(), {
                 'id': self._device_id,
                 'token': self._device_token,
             })
@@ -353,7 +400,7 @@ class CBCWatchVideoIE(CBCWatchBaseIE):
 
 class CBCWatchIE(CBCWatchBaseIE):
     IE_NAME = 'cbc.ca:watch'
-    _VALID_URL = r'https?://watch\.cbc\.ca/(?:[^/]+/)+(?P<id>[0-9a-f-]+)'
+    _VALID_URL = r'https?://(?:gem|watch)\.cbc\.ca/(?:[^/]+/)+(?P<id>[0-9a-f-]+)'
     _TESTS = [{
         # geo-restricted to Canada, bypassable
         'url': 'http://watch.cbc.ca/doc-zone/season-6/customer-disservice/38e815a-009e3ab12e4',
@@ -379,6 +426,9 @@ class CBCWatchIE(CBCWatchBaseIE):
             'description': 'Arthur, the sweetest 8-year-old aardvark, and his pals solve all kinds of problems with humour, kindness and teamwork.',
         },
         'playlist_mincount': 30,
+    }, {
+        'url': 'https://gem.cbc.ca/media/this-hour-has-22-minutes/season-26/episode-20/38e815a-0108c6c6a42',
+        'only_matching': True,
     }]
 
     def _real_extract(self, url):
